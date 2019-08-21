@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require 'active_record/connection_adapters/postgresql/schema_statements'
 
 module ActiveRecord
@@ -5,68 +7,25 @@ module ActiveRecord
     module CockroachDB
       module SchemaStatements
         include ActiveRecord::ConnectionAdapters::PostgreSQL::SchemaStatements
-        # NOTE(joey): This was ripped from PostgresSQL::SchemaStatements, with a
-        # slight modification to change setval(string, int, bool) to just
-        # setval(string, int) for CockroachDB compatbility.
-        # See https://github.com/cockroachdb/cockroach/issues/19723
-        #
-        # Resets the sequence of a table's primary key to the maximum value.
-        def reset_pk_sequence!(table, pk = nil, sequence = nil) #:nodoc:
-          unless pk && sequence
-            default_pk, default_sequence = pk_and_sequence_for(table)
 
-            pk ||= default_pk
-            sequence ||= default_sequence
-          end
-
-          if @logger && pk && !sequence
-            @logger.warn "#{table} has primary key #{pk} with no default sequence."
-          end
-
-          if pk && sequence
-            quoted_sequence = quote_table_name(sequence)
-            max_pk = query_value("SELECT MAX(#{quote_column_name pk}) FROM #{quote_table_name(table)}", "SCHEMA")
-            if max_pk.nil?
-              if postgresql_version >= 100000
-                minvalue = query_value("SELECT seqmin FROM pg_sequence WHERE seqrelid = #{quote(quoted_sequence)}::regclass", "SCHEMA")
-              else
-                minvalue = query_value("SELECT min_value FROM #{quoted_sequence}", "SCHEMA")
-              end
-            end
-            if max_pk
-              # NOTE(joey): This is done to replace the call:
-              #
-              #    SELECT setval(..., max_pk, false)
-              #
-              # with
-              #
-              #    SELECT setval(..., max_pk-1)
-              #
-              # These two statements are semantically equivilant, but
-              # setval(string, int, bool) is not supported by CockroachDB.
-              #
-              # FIXME(joey): This is incorrect if the sequence is not 1
-              # incremented. We would need to pull out the custom increment value.
-              max_pk - 1
-            end
-            query_value("SELECT setval(#{quote(quoted_sequence)}, #{max_pk ? max_pk : minvalue})", "SCHEMA")
-          end
-        end
-
-        # copied from ConnectionAdapters::SchemaStatements
+        # copied from ActiveRecord::ConnectionAdapters::SchemaStatements
         #
         # modified insert into statement to always wrap the version value into single quotes for cockroachdb.
-        def assume_migrated_upto_version(version, migrations_paths)
-          migrations_paths = Array(migrations_paths)
-          version = version.to_i
-
-          migrated = ActiveRecord::SchemaMigration.all_versions.map(&:to_i)
-          versions = migration_context.migration_files.map do |file|
-            migration_context.parse_migration_filename(file).first.to_i
+        def assume_migrated_upto_version(version, migrations_paths = nil)
+          unless migrations_paths.nil?
+            ActiveSupport::Deprecation.warn(<<~MSG.squish)
+              Passing migrations_paths to #assume_migrated_upto_version is deprecated and will be removed in Rails 6.1.
+            MSG
           end
 
+          version = version.to_i
+          sm_table = quote_table_name(schema_migration.table_name)
+
+          migrated = migration_context.get_all_versions
+          versions = migration_context.migrations.map(&:version)
+
           unless migrated.include?(version)
-            execute insert_versions_sql(version)
+            execute insert_versions_sql(version.to_s)
           end
 
           inserting = (versions - migrated).select { |v| v < version }
@@ -74,26 +33,31 @@ module ActiveRecord
             if (duplicate = inserting.detect { |v| inserting.count(v) > 1 })
               raise "Duplicate migration #{duplicate}. Please renumber your migrations to resolve the conflict."
             end
-            if supports_multi_insert?
-              execute insert_versions_sql(inserting)
-            else
-              inserting.each do |v|
-                execute insert_versions_sql(v)
-              end
-            end
+
+            execute insert_versions_sql(inserting.map(&:to_s))
           end
         end
 
-        def insert_versions_sql(versions)
-          sm_table = quote_table_name(ActiveRecord::SchemaMigration.table_name)
-          if versions.is_a?(Array)
-            sql = "INSERT INTO #{sm_table} (version) VALUES\n".dup
-            sql << versions.map { |v| "('#{quote(v)}')" }.join(",\n")
-            sql << ";\n\n"
-            sql
-          else
-            "INSERT INTO #{sm_table} (version) VALUES ('#{quote(versions)}');"
+        # copied from ActiveRecord::PostgreSQL::SchemaStatements
+        #
+        # - removed the algortithm part from the DROP INDEX statement
+        # - added CASCADE because cockroach won't drop a UNIQUE constrain without
+        def remove_index(table_name, options = {})
+          table = Utils.extract_schema_qualified_name(table_name.to_s)
+
+          if options.is_a?(Hash) && options.key?(:name)
+            provided_index = Utils.extract_schema_qualified_name(options[:name].to_s)
+
+            options[:name] = provided_index.identifier
+            table = PostgreSQL::Name.new(provided_index.schema, table.identifier) unless table.schema.present?
+
+            if provided_index.schema.present? && table.schema != provided_index.schema
+              raise ArgumentError, "Index schema '#{provided_index.schema}' does not match table schema '#{table.schema}'"
+            end
           end
+
+          index_to_remove = PostgreSQL::Name.new(table.schema, index_name_for_remove(table.to_s, options))
+          execute "DROP INDEX #{quote_table_name(index_to_remove)} CASCADE"
         end
       end
     end

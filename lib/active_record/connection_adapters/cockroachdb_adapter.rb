@@ -1,8 +1,10 @@
+# frozen_string_literal: true
+
 require 'active_record/connection_adapters/postgresql_adapter'
-require "active_record/connection_adapters/postgresql/schema_statements"
-require "active_record/connection_adapters/cockroachdb/schema_statements"
-require "active_record/connection_adapters/cockroachdb/referential_integrity"
-require "active_record/connection_adapters/cockroachdb/transaction_manager"
+require 'active_record/connection_adapters/postgresql/schema_statements'
+require 'active_record/connection_adapters/cockroachdb/schema_statements'
+require 'active_record/connection_adapters/cockroachdb/referential_integrity'
+require 'active_record/connection_adapters/cockroachdb/transaction_manager'
 
 module ActiveRecord
   module ConnectionHandling
@@ -17,13 +19,11 @@ module ActiveRecord
       conn_params[:dbname] = conn_params.delete(:database) if conn_params[:database]
 
       # Forward only valid config params to PG::Connection.connect.
-      valid_conn_param_keys = PG::Connection.conndefaults_hash.keys + [:sslmode, :application_name]
+      valid_conn_param_keys = PG::Connection.conndefaults_hash.keys + %i[sslmode application_name]
       conn_params.slice!(*valid_conn_param_keys)
 
-      # The postgres drivers don't allow the creation of an unconnected
-      # PG::Connection object, so just pass a nil connection object for the
-      # time being.
-      ConnectionAdapters::CockroachDBAdapter.new(nil, logger, conn_params, config)
+      conn = PG.connect(conn_params)
+      ConnectionAdapters::CockroachDBAdapter.new(conn, logger, conn_params, config)
     end
   end
 end
@@ -31,11 +31,10 @@ end
 module ActiveRecord
   module ConnectionAdapters
     class CockroachDBAdapter < PostgreSQLAdapter
-      ADAPTER_NAME = "CockroachDB".freeze
+      ADAPTER_NAME = 'CockroachDB'
 
       include CockroachDB::SchemaStatements
       include CockroachDB::ReferentialIntegrity
-
 
       # Note that in the migration from ActiveRecord 5.0 to 5.1, the
       # `extract_schema_qualified_name` method was aliased in the PostgreSQLAdapter.
@@ -113,21 +112,20 @@ module ActiveRecord
           # Explicitly prevent READ UNCOMMITTED from being used. This
           # was due to the READ UNCOMMITTED test failing.
           # read_uncommitted: "READ UNCOMMITTED",
-          read_committed:   "READ COMMITTED",
-          repeatable_read:  "REPEATABLE READ",
-          serializable:     "SERIALIZABLE"
+          read_committed: 'READ COMMITTED',
+          repeatable_read: 'REPEATABLE READ',
+          serializable: 'SERIALIZABLE'
         }
       end
-
 
       # Sadly, we can only do savepoints at the beginning of
       # transactions. This means that we cannot use them for most cases
       # of transaction, so we just pretend they're usable.
-      def create_savepoint(name = "COCKROACH_RESTART"); end
+      def create_savepoint(name = 'COCKROACH_RESTART'); end
 
-      def exec_rollback_to_savepoint(name = "COCKROACH_RESTART"); end
+      def exec_rollback_to_savepoint(name = 'COCKROACH_RESTART'); end
 
-      def release_savepoint(name = "COCKROACH_RESTART"); end
+      def release_savepoint(name = 'COCKROACH_RESTART'); end
 
       def indexes(table_name, name = nil) # :nodoc:
         # The PostgreSQL adapter uses a correlated subquery in the following query,
@@ -143,7 +141,7 @@ module ActiveRecord
 
         table = Utils.extract_schema_qualified_name(table_name.to_s)
 
-        result = query(<<-SQL, "SCHEMA")
+        result = query(<<-SQL, 'SCHEMA')
           SELECT distinct i.relname, d.indisunique, d.indkey, pg_get_indexdef(d.indexrelid), t.oid,
                           pg_catalog.obj_description(i.oid, 'pg_class') AS comment
           FROM pg_class t
@@ -160,7 +158,7 @@ module ActiveRecord
         result.map do |row|
           index_name = row[0]
           unique = row[1]
-          indkey = row[2].split(" ").map(&:to_i)
+          indkey = row[2].split(' ').map(&:to_i)
           inddef = row[3]
           oid = row[4]
           comment = row[5]
@@ -170,11 +168,11 @@ module ActiveRecord
           if indkey.include?(0)
             columns = expressions
           else
-            columns = Hash[query(<<-SQL.strip_heredoc, "SCHEMA")].values_at(*indkey).compact
+            columns = Hash[query(<<-SQL.strip_heredoc, 'SCHEMA')].values_at(*indkey).compact
               SELECT a.attnum, a.attname
               FROM pg_attribute a
               WHERE a.attrelid = #{oid}
-              AND a.attnum IN (#{indkey.join(",")})
+              AND a.attnum IN (#{indkey.join(',')})
             SQL
 
             # add info on sort order for columns (only desc order is explicitly specified, asc is the default)
@@ -196,10 +194,9 @@ module ActiveRecord
         end.compact
       end
 
-
       def primary_keys(table_name)
-          name = Utils.extract_schema_qualified_name(table_name.to_s)
-          select_values(<<-SQL.strip_heredoc, "SCHEMA")
+        name = Utils.extract_schema_qualified_name(table_name.to_s)
+        select_values(<<-SQL.strip_heredoc, 'SCHEMA')
           SELECT column_name
               FROM information_schema.key_column_usage kcu
               JOIN information_schema.table_constraints tc
@@ -208,9 +205,9 @@ module ActiveRecord
               AND kcu.constraint_name = tc.constraint_name
               WHERE constraint_type = 'PRIMARY KEY'
               AND kcu.table_name = #{quote(name.identifier)}
-              AND kcu.table_schema = #{name.schema ? quote(name.schema) : "ANY (current_schemas(false))"}
+              AND kcu.table_schema = #{name.schema ? quote(name.schema) : 'ANY (current_schemas(false))'}
               ORDER BY kcu.ordinal_position
-          SQL
+        SQL
       end
 
       # This is hardcoded to 63 (as previously was in ActiveRecord 5.0) to aid in
@@ -230,71 +227,71 @@ module ActiveRecord
 
       private
 
-        def initialize_type_map(m = type_map)
-          super(m)
-          # NOTE(joey): PostgreSQL intervals have a precision.
-          # CockroachDB intervals do not, so overide the type
-          # definition. Returning a ArgumentError may not be correct.
-          # This needs to be tested.
-          m.register_type "interval" do |_, _, sql_type|
-            precision = extract_precision(sql_type)
-            if precision
-              raise(ArgumentError, "CockroachDB does not support precision on intervals, but got precision: #{precision}")
-            end
-            OID::SpecializedString.new(:interval, precision: precision)
+      def initialize_type_map(m = type_map)
+        super(m)
+        # NOTE(joey): PostgreSQL intervals have a precision.
+        # CockroachDB intervals do not, so overide the type
+        # definition. Returning a ArgumentError may not be correct.
+        # This needs to be tested.
+        m.register_type 'interval' do |_, _, sql_type|
+          precision = extract_precision(sql_type)
+          if precision
+            raise(ArgumentError, "CockroachDB does not support precision on intervals, but got precision: #{precision}")
+          end
+
+          OID::SpecializedString.new(:interval, precision: precision)
+        end
+      end
+
+      # Configures the encoding, verbosity, schema search path, and time zone of the connection.
+      # This is called by #connect and should not be called manually.
+      #
+      # NOTE(joey): This was cradled from postgresql_adapter.rb. This
+      # was due to needing to override configuration statements.
+      def configure_connection
+        if @config[:encoding]
+          @connection.set_client_encoding(@config[:encoding])
+        end
+        self.client_min_messages = @config[:min_messages] || 'warning'
+        self.schema_search_path = @config[:schema_search_path] || @config[:schema_order]
+
+        # Use standard-conforming strings so we don't have to do the E'...' dance.
+        set_standard_conforming_strings
+
+        variables = @config.fetch(:variables, {}).stringify_keys
+
+        # If using Active Record's time zone support configure the connection to return
+        # TIMESTAMP WITH ZONE types in UTC.
+        unless variables['timezone']
+          if ActiveRecord::Base.default_timezone == :utc
+            variables['timezone'] = 'UTC'
+          elsif @local_tz
+            variables['timezone'] = @local_tz
           end
         end
 
-        # Configures the encoding, verbosity, schema search path, and time zone of the connection.
-        # This is called by #connect and should not be called manually.
-        #
-        # NOTE(joey): This was cradled from postgresql_adapter.rb. This
-        # was due to needing to override configuration statements.
-        def configure_connection
-          if @config[:encoding]
-            @connection.set_client_encoding(@config[:encoding])
-          end
-          self.client_min_messages = @config[:min_messages] || "warning"
-          self.schema_search_path = @config[:schema_search_path] || @config[:schema_order]
-
-          # Use standard-conforming strings so we don't have to do the E'...' dance.
-          set_standard_conforming_strings
-
-          variables = @config.fetch(:variables, {}).stringify_keys
-
-          # If using Active Record's time zone support configure the connection to return
-          # TIMESTAMP WITH ZONE types in UTC.
-          unless variables["timezone"]
-            if ActiveRecord::Base.default_timezone == :utc
-              variables["timezone"] = "UTC"
-            elsif @local_tz
-              variables["timezone"] = @local_tz
-            end
-          end
-
-          # NOTE(joey): This is a workaround as CockroachDB 1.1.x
-          # supports SET TIME ZONE <...> and SET "time zone" = <...> but
-          # not SET timezone = <...>.
-          if variables.key?("timezone")
-            tz = variables.delete("timezone")
-            execute("SET TIME ZONE #{quote(tz)}", "SCHEMA")
-          end
-
-          # SET statements from :variables config hash
-          # https://www.postgresql.org/docs/current/static/sql-set.html
-          variables.map do |k, v|
-            if v == ":default" || v == :default
-              # Sets the value to the global or compile default
-
-              # NOTE(joey): I am not sure if simply commenting this out
-              # is technically correct.
-              # execute("SET #{k} = DEFAULT", "SCHEMA")
-            elsif !v.nil?
-              execute("SET SESSION #{k} = #{quote(v)}", "SCHEMA")
-            end
-          end
+        # NOTE(joey): This is a workaround as CockroachDB 1.1.x
+        # supports SET TIME ZONE <...> and SET "time zone" = <...> but
+        # not SET timezone = <...>.
+        if variables.key?('timezone')
+          tz = variables.delete('timezone')
+          execute("SET TIME ZONE #{quote(tz)}", 'SCHEMA')
         end
 
+        # SET statements from :variables config hash
+        # https://www.postgresql.org/docs/current/static/sql-set.html
+        variables.map do |k, v|
+          if v == ':default' || v == :default
+            # Sets the value to the global or compile default
+
+            # NOTE(joey): I am not sure if simply commenting this out
+            # is technically correct.
+            # execute("SET #{k} = DEFAULT", "SCHEMA")
+          elsif !v.nil?
+            execute("SET SESSION #{k} = #{quote(v)}", 'SCHEMA')
+          end
+        end
+      end
 
       # end private
     end

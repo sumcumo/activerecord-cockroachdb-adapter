@@ -1,4 +1,5 @@
 # frozen_string_literal: true
+
 # NOTE(joey): This is cradled from connection_adapters/postgresql/referential_integrity.rb
 # It is commonly used for setting up fixtures during tests.
 module ActiveRecord
@@ -25,24 +26,22 @@ module ActiveRecord
           begin
             yield
           rescue ActiveRecord::InvalidForeignKey => e
-            warn <<-WARNING
-WARNING: Rails was not able to disable referential integrity.
+            warn <<~WARNING
+              WARNING: Rails was not able to disable referential integrity.
 
-Please go to https://github.com/cockroachdb/activerecord-cockroachdb-adapter
-and report this issue.
+              Please go to https://github.com/cockroachdb/activerecord-cockroachdb-adapter
+              and report this issue.
 
-    cause: #{original_exception.try(:message)}
+                  cause: #{original_exception.try(:message)}
 
-              WARNING
+            WARNING
             raise e
           end
 
           begin
             transaction do
-              if !fkeys.nil?
-                 fkeys.each do |fkey|
-                  add_foreign_key fkey.from_table, fkey.to_table, fkey.options
-                end
+              fkeys&.each do |fkey|
+                add_foreign_key fkey.from_table, fkey.to_table, fkey.options
               end
             end
           rescue ActiveRecord::ActiveRecordError
