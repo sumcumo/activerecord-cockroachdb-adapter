@@ -43,10 +43,10 @@ module ActiveRecord
         # - removed the algortithm part from the DROP INDEX statement
         # - added CASCADE because cockroach won't drop a UNIQUE constrain without
         def remove_index(table_name, options = {})
-          table = Utils.extract_schema_qualified_name(table_name.to_s)
+          table = PostgreSQL::Utils.extract_schema_qualified_name(table_name.to_s)
 
           if options.is_a?(Hash) && options.key?(:name)
-            provided_index = Utils.extract_schema_qualified_name(options[:name].to_s)
+            provided_index = PostgreSQL::Utils.extract_schema_qualified_name(options[:name].to_s)
 
             options[:name] = provided_index.identifier
             table = PostgreSQL::Name.new(provided_index.schema, table.identifier) unless table.schema.present?
