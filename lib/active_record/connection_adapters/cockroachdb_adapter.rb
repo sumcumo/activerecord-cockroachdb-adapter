@@ -121,11 +121,17 @@ module ActiveRecord
       # Sadly, we can only do savepoints at the beginning of
       # transactions. This means that we cannot use them for most cases
       # of transaction, so we just pretend they're usable.
-      def create_savepoint(name = 'COCKROACH_RESTART'); end
+      def create_savepoint(*)
+        execute('SAVEPOINT cockroach_restart')
+      end
 
-      def exec_rollback_to_savepoint(name = 'COCKROACH_RESTART'); end
+      def exec_rollback_to_savepoint(*)
+        execute('ROLLBACK TO SAVEPOINT cockroach_restart')
+      end
 
-      def release_savepoint(name = 'COCKROACH_RESTART'); end
+      def release_savepoint(*)
+        execute('RELEASE SAVEPOINT cockroach_restart')
+      end
 
       def indexes(table_name, name = nil) # :nodoc:
         # The PostgreSQL adapter uses a correlated subquery in the following query,
