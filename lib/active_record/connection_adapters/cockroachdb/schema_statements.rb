@@ -37,28 +37,6 @@ module ActiveRecord
             execute insert_versions_sql(inserting.map(&:to_s))
           end
         end
-
-        # copied from ActiveRecord::PostgreSQL::SchemaStatements
-        #
-        # - removed the algortithm part from the DROP INDEX statement
-        # - added CASCADE because cockroach won't drop a UNIQUE constrain without
-        def remove_index(table_name, options = {})
-          table = PostgreSQL::Utils.extract_schema_qualified_name(table_name.to_s)
-
-          if options.is_a?(Hash) && options.key?(:name)
-            provided_index = PostgreSQL::Utils.extract_schema_qualified_name(options[:name].to_s)
-
-            options[:name] = provided_index.identifier
-            table = PostgreSQL::Name.new(provided_index.schema, table.identifier) unless table.schema.present?
-
-            if provided_index.schema.present? && table.schema != provided_index.schema
-              raise ArgumentError, "Index schema '#{provided_index.schema}' does not match table schema '#{table.schema}'"
-            end
-          end
-
-          index_to_remove = PostgreSQL::Name.new(table.schema, index_name_for_remove(table.to_s, options))
-          execute "DROP INDEX #{quote_table_name(index_to_remove)} CASCADE"
-        end
       end
     end
   end
